@@ -25,16 +25,12 @@
 <script src="https://unpkg.com/lucide@1.67.0/dist/umd/lucide.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
 <style>
-/* Schedule & Swap Tracker v1.0 — warm fridge-calendar look, Nunito, coral accent. */
+/* Simple Schedule v2 — two states only (Work / Off); changed days are marked automatically. */
 :root{color-scheme:light dark;
   --bg:light-dark(#fbf7f2,#16120f);--card:light-dark(#ffffff,#221c17);--ink:light-dark(#231d17,#f4ede4);
   --muted:light-dark(#76695c,#ab9c8d);--line:light-dark(#efe6db,#352c24);--accent:light-dark(#d9573a,#ff8b68);
   --g-bg:light-dark(#e2f4e6,#163020);--g-fg:light-dark(#1c7436,#80d99c);
-  --o-bg:light-dark(#efece8,#2a2520);--o-fg:light-dark(#786f66,#a89e94);
-  --b-bg:light-dark(#e1ecff,#17243e);--b-fg:light-dark(#2753c4,#93b5ff);
-  --r-bg:light-dark(#fde4e1,#3c1a17);--r-fg:light-dark(#bf3328,#ff9d93);
-  --y-bg:light-dark(#fff1c4,#3a2f10);--y-fg:light-dark(#8a6300,#ffd466)}
-/* Theme setting is applied as an inline color-scheme on <html> (see applyTheme) */
+  --o-bg:light-dark(#efece8,#2a2520);--o-fg:light-dark(#786f66,#a89e94)}
 *{box-sizing:border-box;min-width:0}
 body{margin:0;padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);background:var(--bg);color:var(--ink);font:16px/1.5 Nunito,system-ui,sans-serif;overflow-x:clip;-webkit-tap-highlight-color:transparent}
 button,input,textarea{font:inherit;color:inherit}
@@ -42,7 +38,6 @@ input,textarea{font-size:16px}
 :focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:12px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:22px}
 .muted{color:var(--muted)}
-.on-accent{color:var(--card)}
 .tnum{font-variant-numeric:tabular-nums;white-space:nowrap}
 .sheet{animation:up .22s ease-out;padding-bottom:calc(2rem + env(safe-area-inset-bottom))!important}
 .sheet-wrap{padding-top:env(safe-area-inset-top)}
@@ -50,32 +45,17 @@ input,textarea{font-size:16px}
 .shake{animation:shake .35s}
 @keyframes shake{25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
 @media (prefers-reduced-motion:reduce){.sheet,.shake{animation:none}}
+#boot{position:fixed;inset:0;display:grid;place-items:center;color:var(--muted);font-weight:700}
 </style>
 <script>try{var t=localStorage.getItem("ns-theme");if(t==="light"||t==="dark")document.documentElement.style.setProperty("color-scheme",t,"important")}catch(e){}</script>
 </head>
 <body>
-<div id="root"></div>
+<div id="root"><div id="boot">Loading…</div></div>
 
 <script type="text/babel" data-presets="react">
 {
 /* =====================================================================
-   1) FIREBASE SETUP (optional — the app works without it)
-   ---------------------------------------------------------------------
-   Without keys, data is saved on each phone only (localStorage).
-   To sync all phones in real time:
-     a. console.firebase.google.com → Add project (free "Spark" plan).
-     b. Build → Firestore Database → Create database (any region).
-     c. Project settings → Your apps → Web (</>) → copy the config
-        object and paste the values below.
-     d. Firestore → Rules → paste and Publish:
-          rules_version = '2';
-          service cloud.firestore {
-            match /databases/{db}/documents {
-              match /households/{h}/{doc=**} { allow read, write: if true; }
-            }
-          }
-   Data paths:  households/{HOUSEHOLD_ID}/days/{YYYY-MM-DD}
-                households/{HOUSEHOLD_ID}/log/{autoId}
+   1) FIREBASE — already filled in for the Park family project.
    ===================================================================== */
 const firebaseConfig = {
   apiKey: "AIzaSyBayO676ksgn5XXYQcZ39TL2Bkkrkkn5RE",
@@ -85,154 +65,110 @@ const firebaseConfig = {
   messagingSenderId: "633183623980",
   appId: "1:633183623980:web:10f00626fbd3b43eebaa89"
 };
-const HOUSEHOLD_ID = "park-jeon";   // change to a long random word for extra privacy
+const HOUSEHOLD_ID = "park-jeon";
 const FIREBASE_SDK = "10.12.2";
 
-/* =====================================================================
-   2) PIN LOCK — a simple privacy screen, not real security.
-      Anyone who opens the page source can read this value.
-   ===================================================================== */
+/* 2) PIN lock — a privacy screen, not real security (visible in page source) */
 const APP_PIN = "1126";
 
-/* =====================================================================
-   3) SCHEDULE RULES
-   ===================================================================== */
-const NANNY = "Charuka";
+/* 3) Normal weekly schedule */
 const PEOPLE = ["Sangmin", "Juhee", "Charuka"];
 const WEEKDAY_HRS = ["08:00", "19:00"], SAT_HRS = ["08:00", "17:00"];
 
-const STATUS = {
-  work:    { label: "Work",              short: "",     c: "g", work: true },
-  off:     { label: "Off",               short: "Off",  c: "o" },
-  swapped: { label: "Swapped Off",       short: "Swap", c: "b" },
-  makeup:  { label: "Make-up Work",      short: "",     c: "y", work: true },
-  sick:    { label: "Sick / Missed",     short: "Sick", c: "r" },
-};
-const ORDER = ["work", "off", "swapped", "makeup", "sick"];
-
-/* =====================================================================
-   4) DATE HELPERS (phone's local time; keys are YYYY-MM-DD)
-   ===================================================================== */
+/* ---------- dates ---------- */
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const pad = n => String(n).padStart(2, "0");
 const keyOf = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
 const parse = k => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
 const toKey = dt => keyOf(dt.getFullYear(), dt.getMonth(), dt.getDate());
-const addDays = (k, n) => { const d = parse(k); d.setDate(d.getDate() + n); return toKey(d); };
-const fmt = k => { const d = parse(k); return `${WD[d.getDay()]} ${MON[d.getMonth()]} ${d.getDate()}`; };   // "Wed Nov 25"
+const fmt = k => { const d = parse(k); return `${WD[d.getDay()]} ${MON[d.getMonth()]} ${d.getDate()}`; };
 const fmtLong = k => parse(k).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
-const sundayOf = k => addDays(k, (7 - parse(k).getDay()) % 7);
-const defaultHours = k => (parse(k).getDay() === 6 ? SAT_HRS : WEEKDAY_HRS);
-const defaultDay = k => parse(k).getDay() === 0
-  ? { status: "off", start: null, end: null }
-  : { status: "work", start: defaultHours(k)[0], end: defaultHours(k)[1] };
-const effective = (k, days) => ({ ...defaultDay(k), ...(days[k] || {}) });
-const hrsText = v => (STATUS[v.status].work && v.start ? `${v.start}–${v.end}` : "");
+const normalHours = k => (parse(k).getDay() === 6 ? SAT_HRS : WEEKDAY_HRS);
+const normalDay = k => parse(k).getDay() === 0 ? { work: false } : { work: true, start: normalHours(k)[0], end: normalHours(k)[1] };
 
-/* =====================================================================
-   5) STORAGE — Firebase if keys exist, otherwise this phone only
-   ===================================================================== */
+/* A saved day is { work: true/false, start, end, note }. Older v1 entries (status: swapped/makeup/sick…) are read too. */
+function dayOf(k, days) {
+  const n = normalDay(k), s = days[k];
+  if (!s) return { ...n, changed: false };
+  const work = typeof s.work === "boolean" ? s.work : (s.status === "work" || s.status === "makeup");
+  const v = work ? { work, start: s.start || normalHours(k)[0], end: s.end || normalHours(k)[1] } : { work };
+  v.note = s.note;
+  v.changed = work !== n.work || (work && (v.start !== n.start || v.end !== n.end)) || !!s.note;
+  return v;
+}
+/* Balance across all months: a normal workday made Off = 1 to make up; a normal Off day worked = 1 made up */
+function balance(days) {
+  let b = 0;
+  Object.keys(days).forEach(k => { const n = normalDay(k), v = dayOf(k, days); if (n.work && !v.work) b++; if (!n.work && v.work) b--; });
+  return b;
+}
+
+/* ---------- storage: Firebase, else this phone only ---------- */
 function firebaseStore(fs) {
-  const base = `households/${HOUSEHOLD_ID}/`;
-  const days = fs.collection(base + "days"), log = fs.collection(base + "log");
+  const base = `households/${HOUSEHOLD_ID}/`, days = fs.collection(base + "days"), log = fs.collection(base + "log");
   return {
     kind: "firebase",
     subDays: (cb, err) => days.onSnapshot(s => { const m = {}; s.docs.forEach(d => (m[d.id] = d.data())); cb(m); }, err),
-    subLog: (cb, err) => log.orderBy("at", "desc").limit(30).onSnapshot(s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))), err),
+    subLog: (cb, err) => log.orderBy("at", "desc").limit(20).onSnapshot(s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))), err),
     setDay: (k, v) => (v ? days.doc(k).set(v) : days.doc(k).delete()),
     addLog: e => log.add(e),
   };
 }
-
 function localStore() {
   const KEY = "nanny-schedule-v1";
   const read = () => { try { return JSON.parse(localStorage.getItem(KEY)) || { days: {}, log: [] }; } catch { return { days: {}, log: [] }; } };
   let state = read(); const subs = new Set();
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} subs.forEach(f => f()); };
-  window.addEventListener("storage", e => { if (e.key === KEY) { state = read(); subs.forEach(f => f()); } });
   const sub = f => { subs.add(f); f(); return () => subs.delete(f); };
   return {
     kind: "local",
     subDays: cb => sub(() => cb({ ...state.days })),
-    subLog: cb => sub(() => cb(state.log.slice(0, 30))),
+    subLog: cb => sub(() => cb(state.log.slice(0, 20))),
     setDay: async (k, v) => { state = { ...state, days: { ...state.days } }; if (v) state.days[k] = v; else delete state.days[k]; save(); },
     addLog: async e => { state = { ...state, log: [{ id: String(Date.now()), ...e }, ...state.log].slice(0, 100) }; save(); },
   };
 }
-
 const loadScript = src => new Promise((ok, no) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); });
-
 async function pickStore() {
   if (firebaseConfig.apiKey) {
     try {
       const cdn = `https://www.gstatic.com/firebasejs/${FIREBASE_SDK}/`;
-      await loadScript(cdn + "firebase-app-compat.js");
-      await loadScript(cdn + "firebase-firestore-compat.js");
+      await loadScript(cdn + "firebase-app-compat.js"); await loadScript(cdn + "firebase-firestore-compat.js");
       const app = window.firebase.apps.length ? window.firebase.app() : window.firebase.initializeApp(firebaseConfig);
       return firebaseStore(app.firestore());
-    } catch (e) { console.warn("Firebase failed — using this phone only", e); }
+    } catch (e) { console.warn("Firebase unavailable — this phone only", e); }
   }
   return localStore();
 }
 
-/* =====================================================================
-   6) UI
-   ===================================================================== */
-const { useState, useEffect, useMemo, useRef } = React;
+/* ---------- UI ---------- */
+const { useState, useEffect, useRef } = React;
 const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
 const setPref = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
-const tint = c => ({ background: `var(--${c}-bg)`, color: `var(--${c}-fg)` });
-
 function Icon({ name, size = 20, className = "", sw = 2 }) {
   const node = window.lucide && window.lucide[name];
   if (!node) return null;
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw}
-      strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
-      {node.map(([t, a], i) => React.createElement(t, { key: i, ...a }))}
-    </svg>
-  );
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+    {node.map(([t, a], i) => React.createElement(t, { key: i, ...a }))}</svg>;
 }
-
-/* Make-up balance across ALL months: each Swapped Off or Sick/Missed day adds 1, each Make-up Work day removes 1 */
-function owedBalance(days) {
-  let owed = 0, made = 0;
-  Object.keys(days).forEach(k => {
-    const s = effective(k, days).status;
-    if (s === "swapped" || s === "sick") owed++;
-    if (s === "makeup") made++;
-  });
-  return owed - made;
-}
+const round = "grid h-11 w-11 place-items-center rounded-full";
+const roundStyle = { background: "var(--card)", border: "1px solid var(--line)" };
 
 function PinScreen({ onUnlock }) {
   const [pin, setPin] = useState(""), [bad, setBad] = useState(false);
-  const press = d => {
-    if (pin.length >= 4) return;
-    const next = pin + d; setPin(next); setBad(false);
-    if (next.length === 4) setTimeout(() => { if (next === APP_PIN) onUnlock(); else { setBad(true); setPin(""); } }, 120);
-  };
-  useEffect(() => {
-    const f = e => { if (/^\d$/.test(e.key)) press(e.key); if (e.key === "Backspace") setPin(p => p.slice(0, -1)); };
-    window.addEventListener("keydown", f); return () => window.removeEventListener("keydown", f);
-  });
+  const press = d => { if (pin.length >= 4) return; const n = pin + d; setPin(n); setBad(false);
+    if (n.length === 4) setTimeout(() => { if (n === APP_PIN) onUnlock(); else { setBad(true); setPin(""); } }, 120); };
   return (
     <div className="mx-auto flex min-h-[calc(100vh-env(safe-area-inset-top))] max-w-[360px] flex-col items-center justify-center px-6">
-      <div className="grid h-16 w-16 place-items-center rounded-3xl" style={{ background: "var(--accent)", color: "var(--card)" }}><Icon name="CalendarDays" size={32} /></div>
-      <h1 className="mt-4 text-[26px] font-extrabold">Charuka's Schedule</h1>
-      <p className="muted text-[15px]">Enter the 4-digit family PIN</p>
-      <div className={`mt-6 flex gap-4 ${bad ? "shake" : ""}`} aria-live="polite" aria-label={`${pin.length} of 4 digits entered`}>
-        {[0, 1, 2, 3].map(i => <span key={i} className="h-4 w-4 rounded-full" style={{ background: i < pin.length ? "var(--ink)" : "var(--line)" }} />)}
-      </div>
-      <p className="mt-3 h-6 text-[14px] font-bold" style={{ color: "var(--r-fg)" }}>{bad ? "Wrong PIN, try again" : ""}</p>
+      <h1 className="text-[26px] font-extrabold">Charuka's Schedule</h1>
+      <p className="muted text-[15px]">Enter the 4-digit PIN</p>
+      <div className={`mt-6 flex gap-4 ${bad ? "shake" : ""}`}>{[0, 1, 2, 3].map(i => <span key={i} className="h-4 w-4 rounded-full" style={{ background: i < pin.length ? "var(--ink)" : "var(--line)" }} />)}</div>
+      <p className="mt-3 h-6 text-[14px] font-bold" style={{ color: "var(--accent)" }}>{bad ? "Wrong PIN" : ""}</p>
       <div className="mt-2 grid w-full grid-cols-3 gap-3">
-        {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"].map((d, i) => d === "" ? <span key={i} /> : (
-          <button key={i} onClick={() => (d === "del" ? setPin(p => p.slice(0, -1)) : press(d))} aria-label={d === "del" ? "Delete" : d}
-            className="grid h-16 place-items-center rounded-2xl text-[24px] font-extrabold active:scale-95" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-            {d === "del" ? <Icon name="Delete" size={24} /> : d}
-          </button>
-        ))}
+        {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"].map((d, i) => d === "" ? <span key={i} /> :
+          <button key={i} aria-label={d === "del" ? "Delete" : d} onClick={() => (d === "del" ? setPin(p => p.slice(0, -1)) : press(d))}
+            className="grid h-16 place-items-center rounded-2xl text-[24px] font-extrabold active:scale-95" style={roundStyle}>{d === "del" ? <Icon name="Delete" size={24} /> : d}</button>)}
       </div>
     </div>
   );
@@ -240,346 +176,193 @@ function PinScreen({ onUnlock }) {
 
 function App() {
   const [unlocked, setUnlocked] = useState(() => pref("ns-pin", "") === APP_PIN);
-  const [store, setStore] = useState(null);
-  const [days, setDays] = useState({});
-  const [log, setLog] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [offline, setOffline] = useState(false);
+  const [store, setStore] = useState(null), [days, setDays] = useState({}), [log, setLog] = useState([]);
+  const [loading, setLoading] = useState(true), [offline, setOffline] = useState(false);
   const [who, setWho] = useState(() => pref("ns-who", ""));
-  // Keep "today" fresh when the app stays open past midnight or comes back from the background
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const tick = () => setNow(prev => { const n = new Date(); return toKey(n) === toKey(prev) ? prev : n; });
-    const id = setInterval(tick, 60000);
-    document.addEventListener("visibilitychange", tick); window.addEventListener("focus", tick);
-    return () => { clearInterval(id); document.removeEventListener("visibilitychange", tick); window.removeEventListener("focus", tick); };
-  }, []);
-  const [ym, setYm] = useState([now.getFullYear(), now.getMonth()]);
-  const [open, setOpen] = useState(null);
-  const [toast, setToast] = useState("");
-  const [showSettings, setShowSettings] = useState(false);
   const [theme, setTheme] = useState(() => pref("ns-theme", "system"));
-  useEffect(() => {
-    // Inline !important so nothing else on the page (or a hosting viewer) can override the choice
-    const r = document.documentElement;
-    if (theme === "light" || theme === "dark") r.style.setProperty("color-scheme", theme, "important");
-    else r.style.removeProperty("color-scheme");
-    setPref("ns-theme", theme);
-  }, [theme]);
-  const today = toKey(now);
+  const [now, setNow] = useState(() => new Date());
+  const [ym, setYm] = useState(() => [new Date().getFullYear(), new Date().getMonth()]);
+  const [open, setOpen] = useState(null), [settings, setSettings] = useState(false), [toast, setToast] = useState("");
 
+  useEffect(() => { const t = () => setNow(p => { const n = new Date(); return toKey(n) === toKey(p) ? p : n; });
+    const id = setInterval(t, 60000); document.addEventListener("visibilitychange", t);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", t); }; }, []);
+  useEffect(() => { const r = document.documentElement;
+    if (theme === "light" || theme === "dark") r.style.setProperty("color-scheme", theme, "important"); else r.style.removeProperty("color-scheme");
+    setPref("ns-theme", theme); }, [theme]);
   useEffect(() => {
     if (!unlocked) return;
-    let unsubs = [], dead = false;
-    const timer = setTimeout(() => setOffline(true), 10000);
-    pickStore().then(s => {
-      if (dead) return;
-      setStore(s);
-      const fail = () => { clearTimeout(timer); setLoading(false); setOffline(true); };
-      unsubs.push(s.subDays(m => { clearTimeout(timer); setOffline(false); setDays(m); setLoading(false); }, fail));
-      unsubs.push(s.subLog(setLog, () => {}));
-    });
-    return () => { dead = true; clearTimeout(timer); unsubs.forEach(u => u && u()); };
+    let un = [], dead = false; const timer = setTimeout(() => setOffline(true), 10000);
+    pickStore().then(s => { if (dead) return; setStore(s);
+      un.push(s.subDays(m => { clearTimeout(timer); setOffline(false); setDays(m); setLoading(false); }, () => { clearTimeout(timer); setLoading(false); setOffline(true); }));
+      un.push(s.subLog(setLog, () => {})); });
+    return () => { dead = true; clearTimeout(timer); un.forEach(u => u && u()); };
   }, [unlocked]);
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 3000); return () => clearTimeout(t); }, [toast]);
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2500); return () => clearTimeout(t); }, [toast]);
 
   if (!unlocked) return <PinScreen onUnlock={() => { setPref("ns-pin", APP_PIN); setUnlocked(true); }} />;
 
-  const [y, m] = ym;
-  const n = new Date(y, m + 1, 0).getDate();
-  const monthKeys = Array.from({ length: n }, (_, i) => keyOf(y, m, i + 1));
-  const workingDays = monthKeys.filter(k => STATUS[effective(k, days).status].work).length;
-  const doneDays = monthKeys.filter(k => k < today && STATUS[effective(k, days).status].work).length;
-  const owed = owedBalance(days);
+  const today = toKey(now), [y, m] = ym, n = new Date(y, m + 1, 0).getDate();
+  const keys = Array.from({ length: n }, (_, i) => keyOf(y, m, i + 1));
+  const workDays = keys.filter(k => dayOf(k, days).work).length;
+  const bal = balance(days);
+  const lead = (new Date(y, m, 1).getDay() + 6) % 7;
   const monthName = new Date(y, m, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
-  const lead = (new Date(y, m, 1).getDay() + 6) % 7;     // Monday-first grid
-  const shift = d => setYm(([yy, mm]) => { const t = new Date(yy, mm + d, 1); return [t.getFullYear(), t.getMonth()]; });
+  const shift = d => setYm(([a, b]) => { const t = new Date(a, b + d, 1); return [t.getFullYear(), t.getMonth()]; });
 
-  async function commit(changes, text) {
-    if (!who) { setToast("First choose who you are (top of the page)"); return false; }
+  async function save(k, v, text) {
+    const by = who || "Someone";
     try {
-      for (const { k, v } of changes) {
-        const body = v ? { ...v, by: who, at: new Date().toISOString() } : null;
-        if (body) Object.keys(body).forEach(f => body[f] === undefined && delete body[f]);
-        await store.setDay(k, body);
-      }
-      const t = new Date(), stamp = `${MON[t.getMonth()]} ${t.getDate()}`;
-      await store.addLog({ at: new Date().toISOString(), by: who, text: `${stamp}: ${text}` });
-      setToast("Saved");
-      return true;
-    } catch (e) { console.error(e); setToast("Could not save — check the internet and try again"); return false; }
-  }
-
-  function scheduleText() {
-    const changes = monthKeys.filter(k => days[k]).map(k => {
-      const v = effective(k, days);
-      return `• ${fmt(k)}: ${STATUS[v.status].label}${hrsText(v) ? ` ${hrsText(v)}` : ""}${v.note ? ` (${v.note})` : ""}`;
-    });
-    return [
-      `${NANNY}'s schedule – ${monthName}`,
-      `Normal: Mon–Fri ${WEEKDAY_HRS.join("–")} · Sat ${SAT_HRS.join("–")} · Sun Off`,
-      "",
-      changes.length ? "Changes:\n" + changes.join("\n") : "No changes this month.",
-      "",
-      `Working days this month: ${workingDays}`,
-      `Make-up days owed: ${Math.max(0, owed)}`,
-    ].join("\n");
+      await store.setDay(k, v ? { ...v, by, at: new Date().toISOString() } : null);
+      const t = new Date(); await store.addLog({ at: t.toISOString(), by, text: `${MON[t.getMonth()]} ${t.getDate()}: ${text}` });
+      setToast("Saved"); setOpen(null);
+    } catch (e) { console.error(e); setToast("Could not save — check internet"); }
   }
   function copyText() {
-    const t = scheduleText();
-    const fallback = () => { const a = document.createElement("textarea"); a.value = t; document.body.appendChild(a); a.select(); try { document.execCommand("copy"); setToast("Copied — paste in WhatsApp"); } catch { setToast("Copy failed"); } a.remove(); };
-    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(() => setToast("Copied — paste in WhatsApp"), fallback); else fallback();
+    const changed = keys.filter(k => dayOf(k, days).changed).map(k => { const v = dayOf(k, days);
+      return `• ${fmt(k)}: ${v.work ? `Work ${v.start}–${v.end}` : "Off"}${v.note ? ` (${v.note})` : ""}`; });
+    const t = [`Charuka's schedule – ${monthName}`, `Normal: Mon–Fri ${WEEKDAY_HRS.join("–")} · Sat ${SAT_HRS.join("–")} · Sun Off`, "",
+      changed.length ? "Changes:\n" + changed.join("\n") : "No changes this month.", "", `Work days: ${workDays}`].join("\n");
+    const fb = () => { const a = document.createElement("textarea"); a.value = t; document.body.appendChild(a); a.select(); try { document.execCommand("copy"); setToast("Copied"); } catch { setToast("Copy failed"); } a.remove(); };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(() => setToast("Copied"), fb); else fb();
   }
 
   return (
-    <div className="mx-auto max-w-[560px] px-4 pb-16 pt-4">
-      <header className="flex items-start justify-between gap-3">
+    <div className="mx-auto max-w-[560px] px-4 pb-14 pt-4">
+      <header className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-[28px] font-extrabold leading-tight">Charuka's schedule</h1>
+          <h1 className="text-[26px] font-extrabold leading-tight">Charuka's schedule</h1>
           <p className="muted flex items-center gap-1.5 text-[13px] font-semibold">
             <Icon name={store && store.kind === "firebase" ? "Cloud" : "Smartphone"} size={14} />
-            {!store ? "Connecting…" : store.kind === "firebase" ? "Live sync on" : "Saved on this phone only"}
+            {!store ? "Connecting…" : store.kind === "firebase" ? "Shared with family" : "This phone only"}{who ? ` · ${who}` : ""}
           </p>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => setShowSettings(true)} aria-label="Settings"
-            className="grid h-11 w-11 place-items-center rounded-full" style={{ background: "var(--card)", border: "1px solid var(--line)" }}><Icon name="Settings" size={19} /></button>
-          <button onClick={() => { setPref("ns-pin", ""); setUnlocked(false); }} aria-label="Lock app"
-            className="grid h-11 w-11 place-items-center rounded-full" style={{ background: "var(--card)", border: "1px solid var(--line)" }}><Icon name="Lock" size={19} /></button>
-        </div>
+        <button onClick={() => setSettings(true)} aria-label="Settings" className={round} style={roundStyle}><Icon name="Settings" size={19} /></button>
       </header>
+      {!who && <button onClick={() => setSettings(true)} className="mt-3 w-full rounded-2xl px-4 py-3 text-left text-[15px] font-bold" style={{ background: "var(--accent)", color: "var(--card)" }}>Tap here to choose your name</button>}
+      {offline && <p className="mt-3 rounded-xl px-3 py-2 text-[14px] font-semibold" style={{ background: "var(--o-bg)" }}>Can't connect — showing saved data.</p>}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-[14px]">
-        <span className="muted font-semibold">I am</span>
-        {PEOPLE.map(p => (
-          <button key={p} onClick={() => { setWho(p); setPref("ns-who", p); }} aria-pressed={who === p}
-            className="min-h-[40px] rounded-full px-4 font-bold"
-            style={who === p ? { background: "var(--accent)", color: "var(--card)" } : { background: "var(--card)", border: "1px solid var(--line)" }}>{p}</button>
-        ))}
-      </div>
-      {offline && <p className="mt-3 rounded-xl px-3 py-2 text-[14px] font-semibold" style={tint("y")}>Can't reach the shared calendar — it may be out of date.</p>}
-
-      {/* Summary */}
+      {/* Summary: two numbers */}
       <section className="mt-4 grid grid-cols-2 gap-3">
-        <div className="card p-4" style={owed > 0 ? { ...tint("y"), borderColor: "transparent" } : {}}>
-          <Icon name="Repeat2" size={20} />
-          <div className="tnum mt-1 text-[38px] font-extrabold leading-none">{Math.max(0, owed)}</div>
-          <div className="mt-1 text-[15px] font-bold leading-tight">Make-up {Math.max(0, owed) === 1 ? "day" : "days"} owed</div>
-          <div className="text-[12.5px] font-semibold opacity-80">{owed > 0 ? "Book a make-up day" : owed < 0 ? `${-owed} extra make-up ${owed === -1 ? "day" : "days"}` : "All balanced"}</div>
-        </div>
         <div className="card p-4">
-          <Icon name="Briefcase" size={20} className="text-[color:var(--g-fg)]" />
-          <div className="tnum mt-1 text-[38px] font-extrabold leading-none">{workingDays}</div>
-          <div className="mt-1 text-[15px] font-bold leading-tight">Working days in {MON[m]}</div>
-          <div className="muted text-[12.5px] font-semibold">{doneDays} done so far</div>
+          <div className="tnum text-[36px] font-extrabold leading-none">{workDays}</div>
+          <div className="mt-1 text-[15px] font-bold">Work days in {MON[m]}</div>
+        </div>
+        <div className="card p-4" style={bal ? { borderColor: "var(--accent)" } : {}}>
+          <div className="tnum text-[36px] font-extrabold leading-none" style={bal > 0 ? { color: "var(--accent)" } : {}}>{Math.abs(bal)}</div>
+          <div className="mt-1 text-[15px] font-bold">{bal > 0 ? `Day${bal > 1 ? "s" : ""} to make up` : bal < 0 ? `Extra day${bal < -1 ? "s" : ""} worked` : "Balanced"}</div>
         </div>
       </section>
 
       {/* Calendar */}
       <section className="card mt-4 p-3">
-        <div className="flex items-center justify-between px-1">
-          <button onClick={() => shift(-1)} aria-label="Previous month" className="grid h-11 w-11 place-items-center rounded-full" style={{ background: "var(--bg)" }}><Icon name="ChevronLeft" /></button>
-          <div className="text-center">
-            <div className="text-[18px] font-extrabold">{monthName}</div>
-            <button onClick={() => setYm([now.getFullYear(), now.getMonth()])} className="text-[13px] font-bold" style={{ color: "var(--accent)" }}>Today</button>
-          </div>
-          <button onClick={() => shift(1)} aria-label="Next month" className="grid h-11 w-11 place-items-center rounded-full" style={{ background: "var(--bg)" }}><Icon name="ChevronRight" /></button>
+        <div className="flex items-center justify-between">
+          <button onClick={() => shift(-1)} aria-label="Previous month" className={round} style={{ background: "var(--bg)" }}><Icon name="ChevronLeft" /></button>
+          <button onClick={() => setYm([now.getFullYear(), now.getMonth()])} className="text-[18px] font-extrabold">{monthName}</button>
+          <button onClick={() => shift(1)} aria-label="Next month" className={round} style={{ background: "var(--bg)" }}><Icon name="ChevronRight" /></button>
         </div>
-        <div className="muted mt-2 grid grid-cols-7 gap-1 text-center text-[12px] font-bold">
-          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(d => <div key={d}>{d}</div>)}
-        </div>
-        {loading ? <div className="muted py-16 text-center">Loading…</div> : (
+        <div className="muted mt-2 grid grid-cols-7 gap-1 text-center text-[12px] font-bold">{["M", "T", "W", "T", "F", "S", "S"].map((d, i) => <div key={i}>{d}</div>)}</div>
+        {loading ? <div className="muted py-16 text-center">Loading…</div> :
           <div className="mt-1 grid grid-cols-7 gap-1">
             {Array.from({ length: lead }, (_, i) => <div key={"e" + i} />)}
-            {monthKeys.map(k => {
-              const v = effective(k, days), s = STATUS[v.status], isToday = k === today;
-              const line = s.work ? `${v.start.slice(0, 2)}–${v.end.slice(0, 2)}` : s.short;
+            {keys.map(k => { const v = dayOf(k, days), isToday = k === today;
               return (
-                <button key={k} onClick={() => setOpen(k)} aria-label={`${fmtLong(k)}: ${s.label} ${hrsText(v)}`}
-                  className="relative flex aspect-[4/5] min-h-[54px] flex-col justify-between rounded-xl p-1.5 text-left transition active:scale-95"
-                  style={{ ...tint(s.c), ...(isToday ? { boxShadow: "0 0 0 2.5px var(--accent)" } : {}) }}>
-                  <span className="text-[15px] font-extrabold leading-none" style={isToday ? { color: "var(--accent)" } : {}}>{parse(k).getDate()}</span>
-                  {v.note && <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full" style={{ background: "currentColor" }} />}
-                  <span className="tnum text-[11px] font-bold leading-none">{line}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-        <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5 px-1 text-[13px]">
-          {ORDER.map(id => <span key={id} className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded" style={{ background: `var(--${STATUS[id].c}-fg)` }} />{STATUS[id].label}</span>)}
+                <button key={k} onClick={() => setOpen(k)} aria-label={`${fmtLong(k)}: ${v.work ? `Work ${v.start} to ${v.end}` : "Off"}${v.changed ? ", changed" : ""}`}
+                  className="relative flex aspect-[4/5] min-h-[52px] flex-col justify-between rounded-xl p-1.5 text-left active:scale-95"
+                  style={{ background: v.work ? "var(--g-bg)" : "var(--o-bg)", color: v.work ? "var(--g-fg)" : "var(--o-fg)",
+                    boxShadow: v.changed ? "inset 0 0 0 2.5px var(--accent)" : isToday ? "inset 0 0 0 2px var(--ink)" : "none" }}>
+                  <span className="text-[15px] font-extrabold leading-none" style={isToday ? { color: "var(--ink)" } : {}}>{parse(k).getDate()}</span>
+                  {v.changed && <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full" style={{ background: "var(--accent)" }} />}
+                  <span className="tnum text-[11px] font-bold leading-none">{v.work ? `${v.start.slice(0, 2)}–${v.end.slice(0, 2)}` : "Off"}</span>
+                </button>); })}
+          </div>}
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 px-1 text-[13px] font-semibold">
+          <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded" style={{ background: "var(--g-fg)" }} />Work</span>
+          <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded" style={{ background: "var(--o-fg)" }} />Off</span>
+          <span className="inline-flex items-center gap-1.5"><i className="h-3 w-3 rounded" style={{ boxShadow: "inset 0 0 0 2px var(--accent)" }} />Changed</span>
         </div>
-        <button onClick={copyText} className="mt-3 flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl text-[15px] font-bold" style={{ background: "var(--bg)" }}>
-          <Icon name="Copy" size={17} />Copy schedule text
-        </button>
       </section>
 
-      {/* Log */}
+      {/* Changes */}
       <section className="card mt-4 p-4">
-        <h2 className="flex items-center gap-2 text-[17px] font-extrabold"><Icon name="History" size={19} />Recent changes</h2>
-        {log.length === 0 ? <p className="muted mt-2 text-[15px]">No changes yet. Tap a day to change it.</p> : (
-          <ul className="mt-1">
-            {log.slice(0, 12).map(e => (
-              <li key={e.id} className="border-t py-2.5 text-[15px] leading-snug first:border-0" style={{ borderColor: "var(--line)" }}>
-                <b>{String(e.by || "Someone")}</b> <span className="muted">·</span> {String(e.text || "")}
-              </li>
-            ))}
-          </ul>
-        )}
+        <h2 className="text-[17px] font-extrabold">Recent changes</h2>
+        {log.length === 0 ? <p className="muted mt-1 text-[15px]">Tap a day to change it.</p> :
+          <ul className="mt-1">{log.slice(0, 8).map(e => <li key={e.id} className="border-t py-2 text-[15px] leading-snug first:border-0" style={{ borderColor: "var(--line)" }}>
+            <b>{String(e.by || "Someone")}</b> <span className="muted">·</span> {String(e.text || "")}</li>)}</ul>}
       </section>
 
-      {open && <DaySheet k={open} days={days} onClose={() => setOpen(null)} onSave={async (ch, t) => { if (await commit(ch, t)) setOpen(null); }} />}
-      {showSettings && <SettingsSheet theme={theme} setTheme={setTheme} who={who} setWho={p => { setWho(p); setPref("ns-who", p); }}
-        onLock={() => { setShowSettings(false); setPref("ns-pin", ""); setUnlocked(false); }} onClose={() => setShowSettings(false)} />}
-      {toast && <div role="status" className="fixed inset-x-0 bottom-[calc(1.25rem+env(safe-area-inset-bottom))] z-50 mx-auto w-fit max-w-[90vw] rounded-full px-5 py-3 text-[15px] font-bold shadow-lg" style={{ background: "var(--ink)", color: "var(--bg)" }}>{toast}</div>}
+      {open && <DaySheet k={open} days={days} onClose={() => setOpen(null)} onSave={save} />}
+      {settings && <Settings who={who} setWho={p => { setWho(p); setPref("ns-who", p); }} theme={theme} setTheme={setTheme} onCopy={copyText}
+        onLock={() => { setPref("ns-pin", ""); setSettings(false); setUnlocked(false); }} onClose={() => setSettings(false)} />}
+      {toast && <div role="status" className="fixed inset-x-0 bottom-[calc(1.25rem+env(safe-area-inset-bottom))] z-50 mx-auto w-fit rounded-full px-5 py-3 text-[15px] font-bold shadow-lg" style={{ background: "var(--ink)", color: "var(--bg)" }}>{toast}</div>}
     </div>
   );
 }
 
-function SettingsSheet({ theme, setTheme, who, setWho, onLock, onClose }) {
+function Sheet({ title, onClose, children }) {
   useEffect(() => { const f = e => e.key === "Escape" && onClose(); window.addEventListener("keydown", f); return () => window.removeEventListener("keydown", f); }, []);
-  const seg = (items, val, set) => (
-    <div className="mt-1.5 grid gap-1 rounded-2xl p-1" style={{ background: "var(--line)", gridTemplateColumns: `repeat(${items.length},minmax(0,1fr))` }}>
-      {items.map(([id, label, ic]) => (
-        <button key={id} onClick={() => set(id)} aria-pressed={val === id}
-          className="flex min-h-[48px] items-center justify-center gap-1.5 rounded-xl text-[15px] font-bold"
-          style={val === id ? { background: "var(--card)", boxShadow: "0 1px 3px rgba(0,0,0,.15)" } : { color: "var(--muted)" }}>
-          {ic && <Icon name={ic} size={17} />}{label}
-        </button>
-      ))}
-    </div>
-  );
   return (
     <div className="sheet-wrap fixed inset-0 z-40 flex items-end justify-center" style={{ background: "rgba(20,14,10,.45)" }} onClick={onClose}>
-      <div className="sheet w-full max-w-[560px] rounded-t-[28px] p-5 pb-8" style={{ background: "var(--card)" }}
-        onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Settings">
+      <div className="sheet max-h-[92vh] w-full max-w-[560px] overflow-y-auto rounded-t-[28px] p-5" style={{ background: "var(--card)" }} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
         <div className="mx-auto mb-3 h-1.5 w-12 rounded-full" style={{ background: "var(--line)" }} />
-        <div className="flex items-center justify-between">
-          <h3 className="text-[23px] font-extrabold">Settings</h3>
-          <button onClick={onClose} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full" style={{ background: "var(--bg)" }}><Icon name="X" /></button>
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-[23px] font-extrabold leading-tight">{title}</h3>
+          <button onClick={onClose} aria-label="Close" className={round + " shrink-0"} style={{ background: "var(--bg)" }}><Icon name="X" /></button>
         </div>
-        <p className="muted mt-4 text-[14px] font-bold">Appearance</p>
-        {seg([["system", "Auto", "SunMoon"], ["light", "Light", "Sun"], ["dark", "Dark", "Moon"]], theme, setTheme)}
-        <p className="muted mt-1.5 text-[13px]">Auto follows your phone's setting.</p>
-        <p className="muted mt-4 text-[14px] font-bold">I am</p>
-        {seg(PEOPLE.map(p => [p, p]), who, setWho)}
-        <p className="muted mt-1.5 text-[13px]">Settings are saved on this phone only.</p>
-        <button onClick={onLock} className="mt-5 flex min-h-[50px] w-full items-center justify-center gap-2 rounded-2xl text-[16px] font-extrabold" style={{ background: "var(--bg)" }}>
-          <Icon name="Lock" size={18} />Lock app now
-        </button>
+        {children}
       </div>
     </div>
   );
 }
 
 function DaySheet({ k, days, onClose, onSave }) {
-  const cur = effective(k, days), def = defaultDay(k), saved = days[k];
-  const [status, setStatus] = useState(cur.status);
-  const [start, setStart] = useState(cur.start || defaultHours(k)[0]);
-  const [end, setEnd] = useState(cur.end || defaultHours(k)[1]);
+  const cur = dayOf(k, days), normal = normalDay(k);
+  const [work, setWork] = useState(cur.work);
+  const [start, setStart] = useState(cur.start || normalHours(k)[0]), [end, setEnd] = useState(cur.end || normalHours(k)[1]);
   const [note, setNote] = useState(cur.note || "");
-  const [target, setTarget] = useState(() => sundayOf(k));
-  const closeRef = useRef(null);
-  useEffect(() => { closeRef.current && closeRef.current.focus(); const f = e => e.key === "Escape" && onClose(); window.addEventListener("keydown", f); return () => window.removeEventListener("keydown", f); }, []);
-
-  const linked = cur.linked && days[cur.linked] ? cur.linked : null;
-  const isWorkday = def.status === "work";
-  const targetIsWorkday = target && defaultDay(target).status === "work" && !days[target];
-  const targetChanged = target && target !== k && days[target] ? effective(target, days) : null;
-
+  const big = on => ({ background: on ? "var(--accent)" : "var(--bg)", color: on ? "var(--card)" : "var(--ink)" });
   function save() {
-    const v = { status, note: note.trim() || undefined, linked: linked || undefined };
-    if (STATUS[status].work) { v.start = start; v.end = end; }
-    const isDefault = !v.note && !linked && status === def.status && (!STATUS[status].work || (start === def.start && end === def.end));
-    const h = STATUS[status].work ? ` (${start}–${end})` : "";
-    onSave([{ k, v: isDefault ? null : v }], `${fmt(k)} → ${STATUS[status].label}${h}${v.note ? ` – ${v.note}` : ""}`);
+    const v = work ? { work, start, end } : { work };
+    if (note.trim()) v.note = note.trim();
+    const same = work === normal.work && (!work || (start === normal.start && end === normal.end)) && !v.note;
+    onSave(k, same ? null : v, `${fmt(k)} → ${work ? `Work ${start}–${end}` : "Off"}${v.note ? ` (${v.note})` : ""}`);
   }
-  function markSick() {
-    onSave([{ k, v: { status: "sick", note: note.trim() || "Make-up needed" } }], `${fmt(k)} → Sick / Missed (make-up needed)`);
-  }
-  function swap() {
-    const [hs, he] = defaultHours(k);
-    onSave([
-      { k, v: { status: "swapped", note: `Swapped with ${fmt(target)}`, linked: target } },
-      { k: target, v: { status: "makeup", start: hs, end: he, note: `Make-up for ${fmt(k)}`, linked: k } },
-    ], `${fmt(k)} swapped to ${fmt(target)} (${hs}–${he})`);
-  }
-  function reset() {
-    const ch = [{ k, v: null }];
-    if (linked) ch.push({ k: linked, v: null });
-    onSave(ch, `${fmt(k)}${linked ? ` & ${fmt(linked)}` : ""} reset to normal schedule`);
-  }
-
-  const btn = "flex min-h-[50px] w-full items-center justify-center gap-2 rounded-2xl text-[16px] font-extrabold";
   return (
-    <div className="sheet-wrap fixed inset-0 z-40 flex items-end justify-center" style={{ background: "rgba(20,14,10,.45)" }} onClick={onClose}>
-      <div className="sheet max-h-[92vh] w-full max-w-[560px] overflow-y-auto rounded-t-[28px] p-5 pb-8" style={{ background: "var(--card)" }}
-        onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Edit ${fmt(k)}`}>
-        <div className="mx-auto mb-3 h-1.5 w-12 rounded-full" style={{ background: "var(--line)" }} />
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-[23px] font-extrabold leading-tight">{fmtLong(k)}</h3>
-            <p className="muted text-[14px]">Normal: {isWorkday ? `${def.start}–${def.end}` : "Off"}{saved && saved.by ? ` · changed by ${String(saved.by)}` : ""}</p>
-          </div>
-          <button ref={closeRef} onClick={onClose} aria-label="Close" className="grid h-11 w-11 shrink-0 place-items-center rounded-full" style={{ background: "var(--bg)" }}><Icon name="X" /></button>
-        </div>
-        {cur.note && <p className="mt-3 rounded-xl px-3 py-2 text-[14px] font-semibold" style={tint(STATUS[cur.status].c)}>{String(cur.note)}</p>}
-
-        {/* Quick actions for a normal workday */}
-        {isWorkday && !saved && (
-          <div className="mt-4 rounded-2xl p-3.5" style={tint("b")}>
-            <p className="flex items-center gap-2 text-[16px] font-extrabold"><Icon name="ArrowLeftRight" size={19} />Quick swap</p>
-            <p className="text-[14px] font-semibold opacity-90">This day becomes Off. Charuka works the chosen day instead.</p>
-            <label className="mt-2 flex items-center justify-between gap-2 rounded-xl px-3 py-2" style={{ background: "var(--card)", color: "var(--ink)" }}>
-              <span className="text-[14px] font-bold">Work instead on</span>
-              <input type="date" value={target} onChange={e => setTarget(e.target.value)} className="bg-transparent font-bold outline-none" />
-            </label>
-            {targetChanged && <p className="mt-1 text-[13px] font-bold">Warning: {fmt(target)} is already changed ({STATUS[targetChanged.status].label}). Swapping will replace it.</p>}
-            {targetIsWorkday && <p className="mt-1 text-[13px] font-semibold">Note: {fmt(target)} is already a normal workday.</p>}
-            <button onClick={swap} disabled={!target || target === k} className={`${btn} on-accent mt-2 disabled:opacity-50`} style={{ background: "var(--b-fg)" }}>
-              Swap {fmt(k)} → {target ? fmt(target) : "?"}
-            </button>
-          </div>
-        )}
-        {isWorkday && cur.status !== "sick" && (
-          <button onClick={markSick} className={`${btn} mt-3`} style={tint("r")}><Icon name="HeartPulse" size={19} />Mark Sick / Missed (+1 owed)</button>
-        )}
-
-        {/* Custom edit */}
-        <p className="mt-5 text-[14px] font-bold muted">Or set status, hours and note</p>
-        <div className="mt-1.5 grid grid-cols-2 gap-2">
-          {ORDER.map(id => {
-            const on = status === id, c = STATUS[id].c;
-            return (
-              <button key={id} onClick={() => setStatus(id)} aria-pressed={on} className="flex min-h-[46px] items-center gap-2 rounded-2xl px-3 text-[15px] font-bold"
-                style={on ? { ...tint(c), boxShadow: `inset 0 0 0 2px var(--${c}-fg)` } : { background: "var(--bg)" }}>
-                <i className="h-3 w-3 shrink-0 rounded-full" style={{ background: `var(--${c}-fg)` }} />{STATUS[id].label}
-                {on && <Icon name="Check" size={17} className="ml-auto" />}
-              </button>
-            );
-          })}
-        </div>
-        {STATUS[status].work && (
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {[["Start", start, setStart], ["End", end, setEnd]].map(([l, val, set]) => (
-              <label key={l} className="rounded-2xl p-3" style={{ background: "var(--bg)" }}>
-                <span className="muted flex items-center gap-1.5 text-[13px] font-bold"><Icon name="Clock" size={15} />{l}</span>
-                <input type="time" value={val} onChange={e => set(e.target.value)} className="mt-1 w-full bg-transparent text-[20px] font-extrabold outline-none" />
-              </label>
-            ))}
-          </div>
-        )}
-        <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} maxLength={120} aria-label="Note"
-          placeholder="Short note, e.g. Late start – doctor visit" className="mt-3 w-full resize-none rounded-2xl p-3 outline-none" style={{ background: "var(--bg)" }} />
-        <button onClick={save} className={`${btn} on-accent mt-3`} style={{ background: "var(--accent)" }}><Icon name="Check" />Save</button>
-
-        {saved && (
-          <button onClick={reset} className={`${btn} mt-3 text-[15px]`} style={{ background: "var(--bg)" }}>
-            <Icon name="RotateCcw" size={17} />Reset to default{linked ? ` (and ${fmt(linked)})` : ""}
-          </button>
-        )}
+    <Sheet title={fmtLong(k)} onClose={onClose}>
+      <p className="muted text-[14px]">Normally: {normal.work ? `Work ${normal.start}–${normal.end}` : "Off"}</p>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button onClick={() => setWork(true)} aria-pressed={work} className="min-h-[64px] rounded-2xl text-[20px] font-extrabold" style={big(work)}>Work</button>
+        <button onClick={() => setWork(false)} aria-pressed={!work} className="min-h-[64px] rounded-2xl text-[20px] font-extrabold" style={big(!work)}>Off</button>
       </div>
-    </div>
+      {work && <div className="mt-3 grid grid-cols-2 gap-2">
+        {[["From", start, setStart], ["To", end, setEnd]].map(([l, val, set]) => (
+          <label key={l} className="rounded-2xl p-3" style={{ background: "var(--bg)" }}>
+            <span className="muted text-[13px] font-bold">{l}</span>
+            <input type="time" value={val} onChange={e => set(e.target.value)} className="mt-0.5 w-full bg-transparent text-[20px] font-extrabold outline-none" />
+          </label>))}
+      </div>}
+      <input value={note} onChange={e => setNote(e.target.value)} maxLength={80} placeholder="Note (optional)" aria-label="Note"
+        className="mt-3 w-full rounded-2xl p-3 outline-none" style={{ background: "var(--bg)" }} />
+      <button onClick={save} className="mt-4 min-h-[54px] w-full rounded-2xl text-[17px] font-extrabold" style={{ background: "var(--ink)", color: "var(--bg)" }}>Save</button>
+      {days[k] && <button onClick={() => onSave(k, null, `${fmt(k)} → back to normal`)} className="mt-2 min-h-[48px] w-full rounded-2xl text-[15px] font-bold" style={{ background: "var(--bg)" }}>Back to normal</button>}
+    </Sheet>
+  );
+}
+
+function Settings({ who, setWho, theme, setTheme, onCopy, onLock, onClose }) {
+  const seg = (items, val, set) => (
+    <div className="mt-1.5 grid gap-1 rounded-2xl p-1" style={{ background: "var(--line)", gridTemplateColumns: `repeat(${items.length},minmax(0,1fr))` }}>
+      {items.map(([id, l]) => <button key={id} onClick={() => set(id)} aria-pressed={val === id} className="min-h-[46px] rounded-xl text-[15px] font-bold"
+        style={val === id ? { background: "var(--card)", boxShadow: "0 1px 3px rgba(0,0,0,.15)" } : { color: "var(--muted)" }}>{l}</button>)}
+    </div>);
+  const row = "mt-2 flex min-h-[50px] w-full items-center justify-center gap-2 rounded-2xl text-[15px] font-bold";
+  return (
+    <Sheet title="Settings" onClose={onClose}>
+      <p className="muted mt-3 text-[14px] font-bold">I am</p>{seg(PEOPLE.map(p => [p, p]), who, setWho)}
+      <p className="muted mt-4 text-[14px] font-bold">Screen</p>{seg([["system", "Auto"], ["light", "Light"], ["dark", "Dark"]], theme, setTheme)}
+      <button onClick={onCopy} className={row + " mt-5"} style={{ background: "var(--bg)" }}><Icon name="Copy" size={17} />Copy month for WhatsApp</button>
+      <button onClick={onLock} className={row} style={{ background: "var(--bg)" }}><Icon name="Lock" size={17} />Lock app</button>
+    </Sheet>
   );
 }
 
